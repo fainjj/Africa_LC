@@ -23,11 +23,6 @@ compare_records <- function(old_files_folder, new_files_folder, join_key) {
                                    full.names = T,
                                    pattern = 'xls$'))
 
-  # non_match <- merge(anti_join(new_recs, old_recs, by=join_key),
-  #                    anti_join(old_recs, new_recs, by=join_key),
-  #                    by = join_key,
-  #                    all=T)
-
   non_match <- list(in_new_not_in_original = anti_join(new_recs, old_recs, by=join_key),
                     in_original_not_in_new = anti_join(old_recs, new_recs, by=join_key))
 
