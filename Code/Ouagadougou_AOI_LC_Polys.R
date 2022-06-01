@@ -1,16 +1,15 @@
+# Load packages
 if (!require(stars)) { install.packages('stars') }; require(stars)
 if (!require(raster)) { install.packages('raster') }; require(raster)
 if (!require(spatialEco)) { install.packages('spatialEco') }; require(spatialEco)
 
+# Def raster to polygon (polygonize) function
 ras2poly <- function(ras) {sf::as_Spatial(sf::st_as_sf(stars::st_as_stars(ras), as_points = FALSE, merge = TRUE))}
 
+# Get land cover AOI
 aoi_lc <- raster('/Users/fainjj/Desktop/tmp/aoi_lc.tif')
 
-# aoi_lc_masks <- map(unique(values(aoi_lc)), . %>% `==`(aoi_lc, .))
-# names(aoi_lc_masks) <- unique(values(aoi_lc))
-# aoi_lc_polys <- map(aoi_lc_masks, ras2poly)
-
-#  ----
+# Convert AOI raster to polygons and export ----
 aoi_lc_polys_full <- ras2poly(aoi_lc)
 names(aoi_lc_polys_full) <- 'IGBP'
 
@@ -18,7 +17,7 @@ writeOGR(aoi_lc_polys_full, '/Users/fainjj/Desktop/tmp/aoi_lc_polys.shp', layer 
 #
 
 
-#  ----
+# Random sample (stratified random) ----
 set.seed(1000)
 
 srsamp <- aoi_lc_polys_full %>%
@@ -37,7 +36,7 @@ assigned_alcs <- srsamp %>%
 
 #
 
-#  ----
+# Get LUT and join LC with emission factors (Akagi et al.) ----
 lut <- read_csv('/Volumes/Yggdrasil/Projects/AMAP/Data/em_ef2.csv') %>%
   select(Code1, IGBP_Name) %>%
   mutate(Code1 = as.character(Code1))
@@ -48,7 +47,7 @@ assigned_alcs_named <- left_join(assigned_alcs, lut, by = c('IGBP' = 'Code1'))
 assigned_alcs_named <- assigned_alcs_named %>% select(!Area)
 #
 
-#  ----
+# Export polygons for each reviewer reviewer ----
 
 filter(assigned_alcs_named, Tech == 'Cabrera') %>%
   as_Spatial() %>%
