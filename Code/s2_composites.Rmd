@@ -1,0 +1,118 @@
+---
+title: "Sentinel 2 Composites"
+author: "J. J. Fain"
+date: '2022-06-22'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Begin by loading packages
+
+```{r, echo=TRUE, message=FALSE}
+if (!require(rasterVis)) { install.packages('rasterVis') }; require(rasterVis)
+if (!require(tidyverse)) { install.packages('tidyverse') }; require(tidyverse)
+if (!require(stringr)) { install.packages('stringr') }; require(stringr)
+if (!require(terra)) { install.packages('terra') }; require(terra)
+if (!require(here)) { install.packages('here') }; require(here)
+```
+
+## Gathering our file manifest
+
+The first step here is going to be to build a manifest that describes the file name, file (directory) path, and a description of which band it contains.
+
+```{r}
+manifest <- list.files(here('Data', 's2targets'),
+                       pattern = 'jp2$',
+                       full.names = T,
+                       recursive = T) %>% 
+  data.frame(full_path = .) %>% 
+  mutate(base=basename(full_path),
+         dpath = dirname(full_path),
+         band = str_extract(base, 'B\\d+A?')
+         )
+```
+
+## Decide what's important
+
+We can't keep everything! Well, we could if all of them had the same resolution. Note that the {terra} package does this cool thing where it doesn't load the pixel values into RAM right away like the {raster} package does. This means we can load information about the singleband rasters super quickly without worrying about memory bloat.
+
+```{r}
+soft_rasters <- map(as.list(manifest$full_path), rast)
+```
+
+Now if we were to check the resolutions of each band we would see exactly what we'd expect from a full Sentinel 2 image. Bands 2-7, 8A (index 13), 11, and 12 are all fine while the others are mismatched. We won't do that yet, but the code is below and we will come back to it later.
+
+```{r, eval=FALSE}
+map(soft_rasters, res)
+```
+
+We **will** write a quick utility function to grab only the layers we want. We can use our manifest to grab them by name but since they don't necessarily have the same resolution we will not be able to stack them just yet.
+
+```{r}
+read_manifest <- function(manifest_obj, ...) {
+  selected_bands <- c(...) %>% toupper()
+  if(any(!selected_bands %in% unique(manifest$band))) {
+    message('One or more bands you chose doesn\'t exist in the manifest!')
+  }
+  manifest_obj %>%
+    filter(band %in% selected_bands) %>%
+    {map(.$full_path, rast)} %>% 
+    `names<-`(c(selected_bands))
+}
+```
+
+## Pulling the good stuff
+
+Now we can use the new function to pull any combinations of the bands we want (provided they all have the same resolution).
+
+```{r}
+sentinel_bands <- read_manifest(manifest,
+                              'b02', 'b03', 'b04',
+                              'b05', 'b8a', 'b12')
+```
+
+That all seems to have gone over okay. Now we can check visually by using plotRGB.
+
+```{r}
+c(sentinel_bands$B02, sentinel_bands$B03, sentinel_bands$B04) %>% plotRGB(3, 2, 1, stretch = 'lin')
+```
+
+## Dealing with resolutions
+
+If we want to be able to do pixel-wise calculations we are going to have to do some disaggregation of pixels. Luckily, since {terra} doesn't read anything into memory until we need it (and does so in chunks even then) we don't have to worry about dissagregating everything down to 10m^2^ pixels. Let's do that for the bands 5, 8A, and 12.
+
+```{r}
+sentinel_bands$B05 <- disagg(sentinel_bands$B05, fact = 2)
+sentinel_bands$B8A <- disagg(sentinel_bands$B8A, fact = 2)
+sentinel_bands$B12 <- disagg(sentinel_bands$B12, fact = 2)
+```
+
+#### NOTE
+
+Unfortunately, disagg will throw an error if you try to pass fact=1., otherwise we could generalize this across all bands at once using the code below. I've raised an issue with the package maintainer so hopefully this will be changed in the future.
+
+```{r, eval=FALSE}
+ read_manifest <- function(manifest_obj, ...) {
+   selected_bands <- c(...) %>% toupper()
+ if(any(!selected_bands %in% unique(manifest$band))) {
+   message('One or more bands you chose doesn\'t exist in the manifest!')
+   }
+ manifest_obj %>%
+   filter(band %in% selected_bands) %>%
+   {map2(.$full_path, .$scaling, ~ disagg(rast(.x), fact = .y))} %>%
+   `names<-`(c(selected_bands))
+ }
+```
+
+### Stacking and doing math
+
+Stacking in the {raster} sense isn't really a thing in {terra}. It has just added new methods to the base *c( )* function which is to say that we've already done everything we need to do before we start doing math. We can do a (modified) NDVI as an example.
+
+```{r}
+ndvi <- with(sentinel_bands, ((B8A-B04)/(B8A+B04)))
+
+rasterVis::levelplot(ndvi)
+```
